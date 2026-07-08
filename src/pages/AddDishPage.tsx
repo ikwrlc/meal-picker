@@ -18,7 +18,7 @@ export default function AddDishPage() {
   const member = getMember()
 
   const [name, setName] = useState('')
-  const [category, setCategory] = useState(DISH_CATEGORIES[0])
+  const [category, setCategory] = useState<string>(DISH_CATEGORIES[0])
   const [type, setType] = useState<DishType>('meat')
   const [ingredients, setIngredients] = useState('')
   const [cookTime, setCookTime] = useState('')

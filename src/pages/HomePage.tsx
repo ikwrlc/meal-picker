@@ -121,7 +121,7 @@ export default function HomePage() {
               <div className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>历史记录和统计已同步</div>
             </div>
             <button
-              onClick={() => { if (confirm('退出当前房间？')) { clearFamily(); window.location.reload() } }}
+              onClick={() => { if (window.confirm('退出当前房间？')) { clearFamily(); window.location.reload() } }}
               className="text-xs px-3 py-1.5 rounded-xl"
               style={{ background: '#FEF2F2', color: '#DC2626' }}
             >
