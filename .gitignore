@@ -1,8 +1,5 @@
 .env
 .env.local
-scrape-images.mjs
-scrape-drinks.mjs
-seed-dishes.mjs
 
 # Logs
 logs
