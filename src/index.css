@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --color-primary: #EA580C;
+  --color-primary-light: #FFF7ED;
+  --color-accent: #F97316;
+  --color-bg: #FFFBEB;
+  --color-surface: #FFFFFF;
+  --color-text: #1C0A00;
+  --color-muted: #78716C;
+  --color-border: #FDE8D8;
+  --shadow-card: 0 4px 20px rgba(234, 88, 12, 0.10), 0 1px 4px rgba(234, 88, 12, 0.06);
+  --shadow-btn: 0 4px 14px rgba(234, 88, 12, 0.30);
+  --nav-height: 64px;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+}
+
+h1, h2, h3 {
+  font-family: 'Calistoga', 'PingFang SC', sans-serif;
+  font-weight: 400;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+.pb-nav {
+  padding-bottom: calc(5rem + var(--safe-bottom));
+}
+
+/* 卡片通用 */
+.card {
+  background: var(--color-surface);
+  border-radius: 24px;
+  box-shadow: var(--shadow-card);
+}
+
+/* 主按钮 */
+.btn-primary {
+  background: var(--color-primary);
+  color: white;
+  border-radius: 16px;
+  padding: 14px 24px;
+  font-weight: 600;
+  font-size: 16px;
+  box-shadow: var(--shadow-btn);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  cursor: pointer;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-primary:active {
+  transform: scale(0.95);
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.20);
+}
+
+/* 次按钮 */
+.btn-ghost {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border-radius: 16px;
+  padding: 14px 24px;
+  font-weight: 600;
+  font-size: 16px;
+  border: 1.5px solid var(--color-border);
+  transition: transform 120ms ease;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-ghost:active {
+  transform: scale(0.96);
+}
+
+/* 标签 pill */
+.pill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 120ms ease;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pill-active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.pill-inactive {
+  background: var(--color-surface);
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+}
+
+/* 隐藏滚动条 */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 输入框 */
+.input {
+  width: 100%;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font-size: 15px;
+  outline: none;
+  font-family: inherit;
+  color: var(--color-text);
+  transition: border-color 150ms;
+}
+
+.input:focus {
+  border-color: var(--color-accent);
+}
