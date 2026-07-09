@@ -1,0 +1,24 @@
+{
+  "name": "今日吃什么",
+  "short_name": "吃什么",
+  "description": "家庭点菜助手，随机搭配今日菜单",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFBEB",
+  "theme_color": "#EA580C",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="116" fill="#EA580C"/>
+  <!-- Glow -->
+  <rect width="512" height="512" rx="116" fill="url(#g)" opacity="0.3"/>
+  <defs>
+    <radialGradient id="g" cx="40%" cy="30%">
+      <stop offset="0%" stop-color="white"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+  </defs>
+  <!-- Bowl body -->
+  <path d="M136 272 Q136 390 256 390 Q376 390 376 272 Z" fill="white"/>
+  <!-- Bowl rim -->
+  <ellipse cx="256" cy="272" rx="120" ry="28" fill="white"/>
+  <!-- Bowl inner shadow -->
+  <ellipse cx="256" cy="272" rx="108" ry="22" fill="#FED7AA" opacity="0.5"/>
+  <!-- Handles -->
+  <rect x="88" y="256" width="56" height="32" rx="16" fill="white"/>
+  <rect x="368" y="256" width="56" height="32" rx="16" fill="white"/>
+  <!-- Steam 1 -->
+  <path d="M196 240 C192 220 202 206 196 186 C190 166 200 152 196 132" stroke="white" stroke-width="9" stroke-linecap="round" fill="none" opacity="0.85"/>
+  <!-- Steam 2 -->
+  <path d="M256 228 C252 208 262 194 256 174 C250 154 260 140 256 120" stroke="white" stroke-width="9" stroke-linecap="round" fill="none" opacity="0.85"/>
+  <!-- Steam 3 -->
+  <path d="M316 240 C312 220 322 206 316 186 C310 166 320 152 316 132" stroke="white" stroke-width="9" stroke-linecap="round" fill="none" opacity="0.85"/>
+</svg>

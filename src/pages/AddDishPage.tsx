@@ -74,7 +74,7 @@ export default function AddDishPage() {
         <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>添加菜品</h1>
       </div>
 
-      <div className="px-5 py-4 pb-12 flex flex-col gap-4">
+      <div className="px-5 py-4 pb-nav flex flex-col gap-4">
         {/* 菜名 + AI */}
         <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
           <label className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--color-muted)' }}>
@@ -91,7 +91,7 @@ export default function AddDishPage() {
             <button
               onClick={fetchAI}
               disabled={!name.trim() || aiLoading}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold flex-shrink-0"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold shrink-0"
               style={{
                 background: name.trim() ? 'var(--color-primary)' : '#F5F5F4',
                 color: name.trim() ? 'white' : 'var(--color-muted)',

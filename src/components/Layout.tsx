@@ -1,18 +1,19 @@
 import { NavLink } from 'react-router-dom'
-import { Home, BookOpen, CalendarDays } from 'lucide-react'
+import { ChefHat, CalendarDays } from 'lucide-react'
+import InstallBanner from './InstallBanner'
 
 const tabs = [
-  { to: '/', icon: Home, label: '首页' },
-  { to: '/dishes', icon: BookOpen, label: '菜品库' },
+  { to: '/', icon: ChefHat, label: '点菜' },
   { to: '/history', icon: CalendarDays, label: '历史' },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col min-h-svh max-w-md mx-auto relative" style={{ background: 'var(--color-bg)' }}>
-      <main className="flex-1 pb-nav overflow-y-auto">
+      <main className="flex-1 overflow-hidden">
         {children}
       </main>
+      <InstallBanner />
 
       <nav
         className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md flex"
