@@ -32,12 +32,39 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mime })
 }
 
+const CATEGORIES = '经典爆款、特色小炒、炖菜红烧、火锅水煮、汤羹、凉拌冷盘、精品大菜、时令水果、饮料'
+
 interface AIDishInfo {
   category: string
   type: DishType
   ingredients: string[]
   cook_time: number
   note: string | null
+}
+
+async function analyzeWithQwen(name: string): Promise<AIDishInfo> {
+  const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${import.meta.env.VITE_QWEN_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'qwen-turbo',
+      messages: [{
+        role: 'user',
+        content: `你是中国家庭菜品分类助手。根据菜名，只返回以下 JSON，不要任何说明或代码块：
+{"category":"分类","type":"类型","ingredients":["食材1","食材2"],"cook_time":分钟数,"note":null}
+分类必须是：${CATEGORIES} 其中之一
+type：meat（荤菜）、vegetable（素菜）、half（半荤半素）
+ingredients：4-8 种主要食材
+菜名：${name}`,
+      }],
+    }),
+  })
+  const data = await resp.json()
+  const text: string = data.choices?.[0]?.message?.content ?? ''
+  return JSON.parse(text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim())
 }
 
 export default function AddDishPage() {
@@ -67,10 +94,7 @@ export default function AddDishPage() {
     try {
       // 1. AI 分析
       setLoadingLabel('AI 分析中…')
-      const { data: ai, error: fnErr } = await supabase.functions.invoke<AIDishInfo>('analyze-dish', {
-        body: { name: name.trim() },
-      })
-      if (fnErr || !ai) throw new Error('AI 分析失败，请检查 Edge Function 是否已部署')
+      const ai = await analyzeWithQwen(name.trim())
 
       // 2. 上传图片
       let image_url: string | null = null
