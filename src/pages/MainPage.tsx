@@ -528,7 +528,7 @@ export default function MainPage() {
 
       {/* Floating random button */}
       <button
-        onClick={randomize}
+        onClick={() => randomize()}
         className="fixed z-30 flex items-center gap-1.5 px-4 py-2.5 rounded-2xl active:scale-95 transition-all"
         style={{
           right: 14,
