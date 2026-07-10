@@ -1,10 +1,46 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Minus, ShoppingCart, X, Shuffle, Copy, Check } from 'lucide-react'
+import { Plus, Minus, ShoppingCart, X, Shuffle, Copy, Check, Pencil, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { getFamily, getMember, saveLocalRecord, getLocalRecords } from '../lib/storage'
+import { getFamily, getMember, getDeviceId, saveLocalRecord, getLocalRecords, getProfile, saveProfile } from '../lib/storage'
 import type { Dish } from '../types'
 import { DISH_CATEGORIES, MEAL_PLAN } from '../types'
+
+const BG_THEMES = [
+  { label: '橙焰', value: 'linear-gradient(135deg, #EA580C 0%, #F97316 100%)' },
+  { label: '暖红', value: 'linear-gradient(135deg, #DC2626 0%, #F87171 100%)' },
+  { label: '海蓝', value: 'linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%)' },
+  { label: '森绿', value: 'linear-gradient(135deg, #15803D 0%, #4ADE80 100%)' },
+  { label: '紫韵', value: 'linear-gradient(135deg, #7C3AED 0%, #C084FC 100%)' },
+  { label: '暖金', value: 'linear-gradient(135deg, #B45309 0%, #F59E0B 100%)' },
+]
+
+async function compressImage(file: File, maxW: number, maxH: number, quality = 0.82): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const ratio = Math.min(maxW / img.width, maxH / img.height, 1)
+      const w = Math.round(img.width * ratio)
+      const h = Math.round(img.height * ratio)
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.src = url
+  })
+}
+
+function getGreeting() {
+  const h = new Date().getHours()
+  if (h < 10) return '早上好'
+  if (h < 14) return '中午好'
+  if (h < 18) return '下午好'
+  return '晚上好'
+}
 
 interface SuccessData {
   dishes: Dish[]
@@ -42,6 +78,16 @@ export default function MainPage() {
   const [confirming, setConfirming] = useState(false)
   const [success, setSuccess] = useState<SuccessData | null>(null)
   const [copied, setCopied] = useState(false)
+  const [isRandomized, setIsRandomized] = useState(false)
+  const [profile, setProfile] = useState(getProfile)
+  const [profileSheetOpen, setProfileSheetOpen] = useState(false)
+  const [editNickname, setEditNickname] = useState('')
+  const [editBg, setEditBg] = useState('')
+  const [editBgImage, setEditBgImage] = useState('')
+  const [editAvatar, setEditAvatar] = useState('')
+  const [saving, setSaving] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
+  const bgInputRef = useRef<HTMLInputElement>(null)
 
   const countMap = useMemo(() => {
     return getLocalRecords().reduce<Record<string, number>>((acc, r) => {
@@ -50,7 +96,29 @@ export default function MainPage() {
     }, {})
   }, [])
 
-  useEffect(() => { loadDishes() }, [])
+  useEffect(() => {
+    loadDishes()
+    loadProfileFromDB()
+  }, [])
+
+  async function loadProfileFromDB() {
+    const deviceId = getDeviceId()
+    const { data } = await supabase
+      .from('user_profiles')
+      .select('nickname, avatar_url, bg_image_url, bg_theme')
+      .eq('device_id', deviceId)
+      .single()
+    if (!data) return
+    const local = getProfile()
+    const updated = {
+      nickname: data.nickname || local.nickname,
+      avatar: data.avatar_url || local.avatar,
+      bgImage: data.bg_image_url || local.bgImage,
+      bgTheme: data.bg_theme || local.bgTheme,
+    }
+    saveProfile(updated)
+    setProfile(updated)
+  }
 
   async function loadDishes() {
     setLoading(true)
@@ -99,16 +167,29 @@ export default function MainPage() {
     })
   }, [])
 
-  function randomize() {
-    const plan = MEAL_PLAN[Math.min(peopleCount, 6)] ?? MEAL_PLAN[3]
+  function randomize(count?: number) {
+    const n = count ?? peopleCount
+    const plan = MEAL_PLAN[Math.min(n, 6)] ?? MEAL_PLAN[3]
     const shuffle = <T,>(arr: T[]) => [...arr].sort(() => Math.random() - 0.5)
+
+    const isWeekend = [0, 6].includes(new Date().getDay())
+    const excludeCategories = new Set(['时令水果', '饮料', '汤羹', ...(!isWeekend ? ['精品大菜', '炖菜红烧'] : [])])
+    const eligible = dishes.filter(d => !excludeCategories.has(d.category))
+
     const picks = [
-      ...shuffle(dishes.filter(d => d.type === 'meat' || d.type === 'half')).slice(0, plan.meat),
-      ...shuffle(dishes.filter(d => d.type === 'vegetable')).slice(0, plan.veg),
+      ...shuffle(eligible.filter(d => d.type === 'meat' || d.type === 'half')).slice(0, plan.meat),
+      ...shuffle(eligible.filter(d => d.type === 'vegetable')).slice(0, plan.veg),
     ]
+
+    // 40% 概率带一道汤，不占主菜名额
+    if (Math.random() < 0.4) {
+      const soups = shuffle(dishes.filter(d => d.category === '汤羹'))
+      if (soups.length > 0) picks.push(soups[0])
+    }
     const newCart = new Map<string, CartItem>()
     picks.forEach(d => newCart.set(d.id, { dish: d, qty: 1 }))
     setCart(newCart)
+    setIsRandomized(true)
     setCartOpen(true)
   }
 
@@ -150,6 +231,80 @@ export default function MainPage() {
     return lines.join('\n')
   }
 
+  function openProfileSheet() {
+    setEditNickname(profile.nickname)
+    setEditBg(profile.bgTheme)
+    setEditBgImage(profile.bgImage)
+    setEditAvatar(profile.avatar)
+    setProfileSheetOpen(true)
+  }
+
+  async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
+    try {
+      const res = await fetch(dataUrl)
+      const blob = await res.blob()
+      const ext = blob.type.includes('png') ? 'png' : 'jpg'
+      const { data, error } = await supabase.storage
+        .from('user-assets')
+        .upload(`${path}.${ext}`, blob, { upsert: true, contentType: blob.type })
+      if (error || !data) return dataUrl
+      const { data: { publicUrl } } = supabase.storage.from('user-assets').getPublicUrl(data.path)
+      return publicUrl
+    } catch {
+      return dataUrl
+    }
+  }
+
+  async function saveProfileChanges() {
+    setSaving(true)
+    const deviceId = getDeviceId()
+    let avatarUrl = editAvatar
+    let bgImageUrl = editBgImage
+
+    if (editAvatar.startsWith('data:')) {
+      avatarUrl = await uploadToStorage(editAvatar, `avatars/${deviceId}`)
+    }
+    if (editBgImage.startsWith('data:')) {
+      bgImageUrl = await uploadToStorage(editBgImage, `backgrounds/${deviceId}`)
+    }
+
+    await supabase.from('user_profiles').upsert({
+      device_id: deviceId,
+      nickname: editNickname.trim(),
+      avatar_url: avatarUrl || null,
+      bg_image_url: bgImageUrl || null,
+      bg_theme: editBg,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'device_id' })
+
+    const updated = {
+      nickname: editNickname.trim(),
+      bgTheme: editBg,
+      bgImage: bgImageUrl,
+      avatar: avatarUrl,
+    }
+    saveProfile(updated)
+    setProfile(updated)
+    setSaving(false)
+    setProfileSheetOpen(false)
+  }
+
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const dataUrl = await compressImage(file, 200, 200, 0.85)
+    setEditAvatar(dataUrl)
+    e.target.value = ''
+  }
+
+  async function handleBgUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const dataUrl = await compressImage(file, 900, 400, 0.78)
+    setEditBgImage(dataUrl)
+    e.target.value = ''
+  }
+
   async function copyMenu() {
     if (!success) return
     try {
@@ -163,21 +318,68 @@ export default function MainPage() {
 
   return (
     <div className="flex flex-col" style={{ height: '100svh', background: 'var(--color-bg)' }}>
-      {/* Header */}
+      {/* Header banner */}
       <div
-        className="flex-shrink-0 px-4 pt-14 pb-3 flex items-center justify-between"
-        style={{ background: 'rgba(255,251,235,0.96)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}
+        className="flex-shrink-0 relative overflow-hidden"
+        style={{
+          height: 'calc(190px + env(safe-area-inset-top, 0px))',
+          ...(profile.bgImage
+            ? { backgroundImage: `url(${profile.bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+            : { background: profile.bgTheme }),
+        }}
       >
-        <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text)', fontFamily: 'Calistoga, sans-serif' }}>
-          今天吃什么
-        </h1>
+        {/* Bottom gradient for readability */}
+        <div
+          className="absolute inset-x-0 bottom-0"
+          style={{ height: 80, background: 'linear-gradient(to top, rgba(0,0,0,0.38) 0%, transparent 100%)' }}
+        />
+
+        {/* Avatar + name — just below safe area */}
+        <button
+          onClick={openProfileSheet}
+          className="absolute px-4 flex items-center gap-3 active:opacity-80 transition-opacity"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 95px)', left: 0, transform: 'translateY(-50%)' }}
+        >
+          <div
+            className="w-11 h-11 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.25)', border: '2px solid rgba(255,255,255,0.5)' }}
+          >
+            {profile.avatar
+              ? <img src={profile.avatar} alt="avatar" className="w-full h-full object-cover" />
+              : <span className="text-white font-bold text-lg">
+                  {(profile.nickname || '美')[0]}
+                </span>
+            }
+          </div>
+          <div className="text-left">
+            <div className="text-white font-semibold text-base leading-tight" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>
+              {getGreeting()}，{profile.nickname || '美食家'}
+            </div>
+            <div className="flex items-center gap-1 mt-0.5" style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12 }}>
+              <span>今天吃什么？</span>
+              <Pencil size={10} strokeWidth={2} />
+            </div>
+          </div>
+        </button>
+
+        {/* 添加菜品 — bottom right */}
         <button
           onClick={() => navigate('/dishes/add')}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold active:scale-95 transition-transform"
-          style={{ background: 'var(--color-primary)', color: 'white', boxShadow: 'var(--shadow-btn)' }}
+          className="absolute right-4 bottom-4 flex items-center gap-2 active:scale-95 transition-transform"
+          style={{
+            background: 'rgba(255,255,255,0.18)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255,255,255,0.4)',
+            borderRadius: 999,
+            padding: '8px 16px',
+            color: 'white',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
         >
-          <Plus size={15} strokeWidth={2.5} />
-          添加菜
+          <Plus size={14} strokeWidth={2.5} />
+          添加菜品
         </button>
       </div>
 
@@ -186,7 +388,7 @@ export default function MainPage() {
         {/* Left category sidebar */}
         <div
           className="flex-shrink-0 overflow-y-auto no-scrollbar"
-          style={{ width: 68, background: '#F7F5F2', borderRight: '1px solid rgba(0,0,0,0.05)' }}
+          style={{ width: 68, background: '#F7F5F2', borderRight: '1px solid rgba(0,0,0,0.05)', paddingBottom: 'calc(var(--nav-height) + var(--safe-bottom))' }}
         >
           {(['全部', ...DISH_CATEGORIES] as string[]).map(c => {
             const isActive = category === c
@@ -221,7 +423,7 @@ export default function MainPage() {
         {/* Right dish list */}
         <div
           className="flex-1 overflow-y-auto py-2 px-3"
-          style={{ paddingBottom: totalItems > 0 ? 88 : 16 }}
+          style={{ paddingBottom: totalItems > 0 ? 'calc(var(--nav-height) + var(--safe-bottom) + 80px)' : 'calc(var(--nav-height) + var(--safe-bottom) + 12px)' }}
         >
           {loading ? (
             <div className="flex items-center justify-center h-40 text-sm" style={{ color: 'var(--color-muted)' }}>
@@ -340,7 +542,7 @@ export default function MainPage() {
         }}
       >
         <Shuffle size={14} strokeWidth={2.5} />
-        随机
+        帮我搭配
       </button>
 
       {/* Success overlay */}
@@ -514,6 +716,179 @@ export default function MainPage() {
         </div>
       )}
 
+      {/* Profile sheet overlay */}
+      {profileSheetOpen && (
+        <div
+          className="fixed inset-0 z-40"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setProfileSheetOpen(false)}
+        />
+      )}
+
+      {/* Hidden file inputs */}
+      <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+      <input ref={bgInputRef} type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
+
+      {/* Profile sheet */}
+      <div
+        className="fixed left-1/2 -translate-x-1/2 w-full max-w-md z-50 flex flex-col"
+        style={{
+          bottom: 0,
+          background: 'var(--color-surface)',
+          borderRadius: '24px 24px 0 0',
+          boxShadow: '0 -8px 40px rgba(0,0,0,0.15)',
+          transform: profileSheetOpen ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform 300ms cubic-bezier(0.32, 0.72, 0, 1)',
+          maxHeight: '90vh',
+        }}
+      >
+        {/* Sheet header */}
+        <div className="flex items-center justify-between flex-shrink-0 px-5 pt-6 pb-4">
+          <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>个人设置</h3>
+          <button
+            onClick={() => setProfileSheetOpen(false)}
+            className="w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ background: '#F5F5F4' }}
+          >
+            <X size={16} style={{ color: 'var(--color-muted)' }} />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 px-5">
+
+          {/* Avatar */}
+          <div className="mb-5">
+            <p className="text-xs font-medium mb-3" style={{ color: 'var(--color-muted)' }}>头像</p>
+            <div className="flex items-center gap-4">
+              <div
+                className="w-16 h-16 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center"
+                style={{ background: editBgImage ? `url(${editBgImage})` : editBg }}
+              >
+                {editAvatar
+                  ? <img src={editAvatar} alt="avatar" className="w-full h-full object-cover" />
+                  : <span className="text-white font-bold text-2xl">
+                      {(editNickname || '美')[0]}
+                    </span>
+                }
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium"
+                  style={{ background: '#FFF7ED', color: 'var(--color-primary)' }}
+                >
+                  <Upload size={14} strokeWidth={2} />
+                  上传照片
+                </button>
+                {editAvatar && (
+                  <button
+                    onClick={() => setEditAvatar('')}
+                    className="px-4 py-1.5 rounded-xl text-xs font-medium"
+                    style={{ background: '#FEF2F2', color: '#DC2626' }}
+                  >
+                    移除
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Nickname */}
+          <div className="mb-5">
+            <p className="text-xs font-medium mb-2" style={{ color: 'var(--color-muted)' }}>我的昵称</p>
+            <input
+              className="input w-full"
+              placeholder="给自己起个名字吧"
+              maxLength={10}
+              value={editNickname}
+              onChange={e => setEditNickname(e.target.value)}
+            />
+          </div>
+
+          {/* Background */}
+          <div className="mb-6">
+            <p className="text-xs font-medium mb-3" style={{ color: 'var(--color-muted)' }}>顶部背景</p>
+
+            {/* Gradient presets */}
+            <div className="grid grid-cols-6 gap-2 mb-3">
+              {BG_THEMES.map(t => {
+                const isSelected = editBgImage === '' && editBg === t.value
+                return (
+                  <button
+                    key={t.value}
+                    onClick={() => { setEditBg(t.value); setEditBgImage('') }}
+                    className="flex flex-col items-center gap-1.5"
+                  >
+                    <div
+                      className="w-full aspect-square rounded-2xl"
+                      style={{
+                        background: t.value,
+                        boxShadow: isSelected ? '0 0 0 2.5px white, 0 0 0 4.5px #EA580C' : 'none',
+                      }}
+                    />
+                    <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>{t.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Custom image */}
+            {editBgImage ? (
+              <div>
+                <div className="w-full rounded-2xl overflow-hidden relative" style={{ height: 120 }}>
+                  <img src={editBgImage} alt="bg" className="w-full h-full object-cover" />
+                  <div
+                    className="absolute inset-0 flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.25)' }}
+                  >
+                    <span className="text-white text-sm font-semibold" style={{ letterSpacing: 0.5 }}>
+                      自定义图片 ✓
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => bgInputRef.current?.click()}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium"
+                    style={{ background: '#FFF7ED', color: 'var(--color-primary)' }}
+                  >
+                    <Upload size={12} strokeWidth={2} />
+                    换图
+                  </button>
+                  <button
+                    onClick={() => setEditBgImage('')}
+                    className="flex-1 py-2 rounded-xl text-xs font-medium"
+                    style={{ background: '#FEF2F2', color: '#DC2626' }}
+                  >
+                    移除
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => bgInputRef.current?.click()}
+                className="w-full flex flex-col items-center justify-center gap-2 rounded-2xl text-sm font-medium"
+                style={{ background: '#F7F5F2', color: 'var(--color-muted)', border: '1.5px dashed #E5E2DF', height: 100 }}
+              >
+                <Upload size={20} strokeWidth={1.8} />
+                上传自定义背景图
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Save button */}
+        <div
+          className="flex-shrink-0 px-5 pt-3"
+          style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 28px)' }}
+        >
+          <button onClick={saveProfileChanges} disabled={saving} className="btn-primary w-full" style={{ opacity: saving ? 0.7 : 1 }}>
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+
       {/* Cart overlay */}
       {cartOpen && (
         <div
@@ -546,12 +921,24 @@ export default function MainPage() {
         <div className="flex items-center justify-between px-5 py-3 flex-shrink-0">
           <div>
             <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>今日菜单</h3>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>{totalItems} 道菜</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>
+              {totalItems} 道菜{isRandomized && !([0,6].includes(new Date().getDay())) ? ' · 平日模式' : isRandomized ? ' · 周末模式' : ''}
+            </p>
           </div>
           <div className="flex items-center gap-2">
+            {isRandomized && (
+              <button
+                onClick={() => randomize()}
+                className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl"
+                style={{ background: '#FFF7ED', color: 'var(--color-primary)' }}
+              >
+                <Shuffle size={12} strokeWidth={2.5} />
+                换一批
+              </button>
+            )}
             {cart.size > 0 && (
               <button
-                onClick={() => setCart(new Map())}
+                onClick={() => { setCart(new Map()); setIsRandomized(false) }}
                 className="text-xs px-3 py-1.5 rounded-xl"
                 style={{ background: '#FEF2F2', color: '#DC2626' }}
               >
@@ -573,7 +960,11 @@ export default function MainPage() {
           <span className="text-sm" style={{ color: 'var(--color-muted)' }}>几人用餐</span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPeopleCount(v => Math.max(1, v - 1))}
+              onClick={() => {
+                const n = Math.max(1, peopleCount - 1)
+                setPeopleCount(n)
+                if (isRandomized) randomize(n)
+              }}
               className="w-7 h-7 rounded-full flex items-center justify-center"
               style={{ background: '#FFF7ED', border: '1.5px solid var(--color-primary)' }}
             >
@@ -583,7 +974,11 @@ export default function MainPage() {
               {peopleCount}
             </span>
             <button
-              onClick={() => setPeopleCount(v => Math.min(10, v + 1))}
+              onClick={() => {
+                const n = Math.min(10, peopleCount + 1)
+                setPeopleCount(n)
+                if (isRandomized) randomize(n)
+              }}
               className="w-7 h-7 rounded-full flex items-center justify-center"
               style={{ background: 'var(--color-primary)' }}
             >
@@ -660,6 +1055,13 @@ export default function MainPage() {
 
         {/* Confirm button */}
         <div className="px-5 pt-4 flex-shrink-0">
+          <button
+            onClick={() => setCartOpen(false)}
+            className="w-full py-3 rounded-2xl text-sm font-medium mb-2"
+            style={{ background: '#F5F5F4', color: 'var(--color-muted)', border: 'none', cursor: 'pointer' }}
+          >
+            继续选菜
+          </button>
           <button
             onClick={confirmOrder}
             disabled={confirming || cart.size === 0}

@@ -64,6 +64,35 @@ export function clearFamily() {
   localStorage.removeItem(MEMBER_KEY)
 }
 
+const PROFILE_KEY = 'meal_user_profile'
+
+export interface UserProfile {
+  nickname: string
+  bgTheme: string   // gradient fallback
+  bgImage: string   // custom background data URL (empty = use bgTheme)
+  avatar: string    // custom avatar data URL (empty = use initial letter)
+}
+
+const DEFAULT_PROFILE: UserProfile = {
+  nickname: '',
+  bgTheme: 'linear-gradient(135deg, #EA580C 0%, #F97316 100%)',
+  bgImage: '',
+  avatar: '',
+}
+
+export function getProfile(): UserProfile {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY)
+    return raw ? { ...DEFAULT_PROFILE, ...JSON.parse(raw) } : DEFAULT_PROFILE
+  } catch {
+    return DEFAULT_PROFILE
+  }
+}
+
+export function saveProfile(profile: UserProfile) {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile))
+}
+
 const SHOPPING_ITEMS_KEY = 'meal_shopping_items'
 
 export interface ShoppingItem {
