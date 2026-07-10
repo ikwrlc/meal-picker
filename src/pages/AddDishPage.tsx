@@ -1,219 +1,221 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Sparkles, Clock, ChefHat } from 'lucide-react'
-import type { DishType } from '../types'
-import { DISH_CATEGORIES } from '../types'
+import { ArrowLeft, Camera, Sparkles, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { getFamily, getMember } from '../lib/storage'
+import { getFamily, getMember, getDeviceId } from '../lib/storage'
+import type { DishType } from '../types'
 
-const TYPE_OPTIONS: { value: DishType; label: string; bg: string; color: string }[] = [
-  { value: 'meat', label: '荤菜', bg: '#FEF2F2', color: '#DC2626' },
-  { value: 'half', label: '半荤', bg: '#FFF7ED', color: '#EA580C' },
-  { value: 'vegetable', label: '素菜', bg: '#F0FDF4', color: '#16A34A' },
-]
+async function compressImage(file: File): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const ratio = Math.min(800 / img.width, 600 / img.height, 1)
+      const w = Math.round(img.width * ratio)
+      const h = Math.round(img.height * ratio)
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    img.src = url
+  })
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, base64] = dataUrl.split(',')
+  const mime = meta.match(/:(.*?);/)?.[1] ?? 'image/jpeg'
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
+}
+
+interface AIDishInfo {
+  category: string
+  type: DishType
+  ingredients: string[]
+  cook_time: number
+  note: string | null
+}
 
 export default function AddDishPage() {
   const navigate = useNavigate()
   const family = getFamily()
   const member = getMember()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [name, setName] = useState('')
-  const [category, setCategory] = useState<string>(DISH_CATEGORIES[0])
-  const [type, setType] = useState<DishType>('meat')
-  const [ingredients, setIngredients] = useState('')
-  const [cookTime, setCookTime] = useState('')
-  const [note, setNote] = useState('')
-  const [isPublic, setIsPublic] = useState(false)
+  const [imageDataUrl, setImageDataUrl] = useState('')
   const [loading, setLoading] = useState(false)
-  const [aiLoading, setAiLoading] = useState(false)
+  const [loadingLabel, setLoadingLabel] = useState('')
   const [error, setError] = useState('')
 
-  async function fetchAI() {
-    if (!name.trim()) return
-    setAiLoading(true)
-    // TODO: 接入通义千问 API
-    setIngredients('（AI 填写功能待接入）')
-    setCookTime('20')
-    setAiLoading(false)
+  async function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImageDataUrl(await compressImage(file))
+    e.target.value = ''
   }
 
   async function save() {
-    if (!name.trim() || !family) return
+    if (!name.trim() || loading) return
     setLoading(true)
     setError('')
-    const { error: e } = await supabase.from('dishes').insert({
-      name: name.trim(),
-      category,
-      type,
-      ingredients: ingredients.split(/[,，、\n]/).map(s => s.trim()).filter(Boolean),
-      cook_time: Number(cookTime) || 20,
-      note: note.trim() || null,
-      is_public: isPublic,
-      family_id: isPublic ? null : family.id,
-      created_by: member?.id ?? null,
-      image_url: null,
-    })
-    if (e) { setError('保存失败：' + e.message); setLoading(false); return }
-    navigate('/dishes', { replace: true })
+
+    try {
+      // 1. AI 分析
+      setLoadingLabel('AI 分析中…')
+      const { data: ai, error: fnErr } = await supabase.functions.invoke<AIDishInfo>('analyze-dish', {
+        body: { name: name.trim() },
+      })
+      if (fnErr || !ai) throw new Error('AI 分析失败，请检查 Edge Function 是否已部署')
+
+      // 2. 上传图片
+      let image_url: string | null = null
+      if (imageDataUrl) {
+        setLoadingLabel('上传图片中…')
+        const blob = dataUrlToBlob(imageDataUrl)
+        const path = `dishes/${getDeviceId()}_${Date.now()}.jpg`
+        const { data: up } = await supabase.storage
+          .from('user-assets')
+          .upload(path, blob, { upsert: false, contentType: 'image/jpeg' })
+        if (up) {
+          image_url = supabase.storage.from('user-assets').getPublicUrl(up.path).data.publicUrl
+        }
+      }
+
+      // 3. 存库
+      setLoadingLabel('保存中…')
+      const { error: dbErr } = await supabase.from('dishes').insert({
+        name: name.trim(),
+        category: ai.category,
+        type: ai.type,
+        ingredients: ai.ingredients,
+        cook_time: ai.cook_time,
+        note: ai.note,
+        is_public: false,
+        family_id: family?.id ?? null,
+        created_by: member?.id ?? null,
+        image_url,
+      })
+      if (dbErr) throw new Error(dbErr.message)
+
+      navigate(-1)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+      setLoading(false)
+      setLoadingLabel('')
+    }
   }
 
   return (
     <div className="flex flex-col min-h-svh" style={{ background: 'var(--color-bg)' }}>
-      {/* 顶部 */}
+      {/* Header */}
       <div
-        className="flex items-center gap-3 px-5 pt-14 pb-4 sticky top-0 z-10"
-        style={{ background: 'rgba(255,251,235,0.92)', backdropFilter: 'blur(16px)' }}
+        className="flex items-center gap-3 px-5 sticky top-0 z-10"
+        style={{
+          paddingTop: 'max(env(safe-area-inset-top, 0px), 14px)',
+          paddingBottom: 16,
+          background: 'rgba(255,251,235,0.92)',
+          backdropFilter: 'blur(16px)',
+        }}
       >
         <button
           onClick={() => navigate(-1)}
           className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: '#FFF7ED', border: 'none', cursor: 'pointer' }}
+          style={{ background: '#FFF7ED' }}
         >
           <ArrowLeft size={18} style={{ color: 'var(--color-primary)' }} strokeWidth={2} />
         </button>
         <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>添加菜品</h1>
       </div>
 
-      <div className="px-5 py-4 pb-nav flex flex-col gap-4">
-        {/* 菜名 + AI */}
-        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--color-muted)' }}>
-            <ChefHat size={13} strokeWidth={2} />
-            菜名
-          </label>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1"
-              placeholder="如：宫保鸡丁"
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
-            <button
-              onClick={fetchAI}
-              disabled={!name.trim() || aiLoading}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold shrink-0"
-              style={{
-                background: name.trim() ? 'var(--color-primary)' : '#F5F5F4',
-                color: name.trim() ? 'white' : 'var(--color-muted)',
-                border: 'none',
-                cursor: name.trim() ? 'pointer' : 'default',
-                boxShadow: name.trim() ? 'var(--shadow-btn)' : 'none',
-                transition: 'all 200ms',
-              }}
-            >
-              <Sparkles size={14} strokeWidth={2} />
-              {aiLoading ? '…' : 'AI'}
-            </button>
-          </div>
-        </div>
-
-        {/* 荤素 */}
-        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-3 block" style={{ color: 'var(--color-muted)' }}>荤素分类</label>
-          <div className="flex gap-2">
-            {TYPE_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setType(opt.value)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
-                style={{
-                  background: type === opt.value ? opt.bg : '#FAFAF9',
-                  color: type === opt.value ? opt.color : 'var(--color-muted)',
-                  border: type === opt.value ? `1.5px solid ${opt.color}30` : '1.5px solid transparent',
-                  cursor: 'pointer',
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 分类 */}
-        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-3 block" style={{ color: 'var(--color-muted)' }}>食材类别</label>
-          <div className="flex flex-wrap gap-2">
-            {DISH_CATEGORIES.map(c => (
-              <button
-                key={c}
-                onClick={() => setCategory(c)}
-                className={`pill ${category === c ? 'pill-active' : 'pill-inactive'}`}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 食材 */}
-        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-muted)' }}>食材（逗号或换行分隔）</label>
-          <textarea
-            className="input resize-none"
-            rows={3}
-            placeholder="猪里脊、木耳、胡萝卜…"
-            value={ingredients}
-            onChange={e => setIngredients(e.target.value)}
-          />
-        </div>
-
-        {/* 时间 + 备注 */}
-        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--color-muted)' }}>
-            <Clock size={13} strokeWidth={2} />
-            烹饪时间（分钟）
-          </label>
-          <input
-            type="number"
-            className="input mb-4"
-            placeholder="20"
-            value={cookTime}
-            onChange={e => setCookTime(e.target.value)}
-          />
-          <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-muted)' }}>备注</label>
-          <input
-            className="input"
-            placeholder="如：孩子爱吃、节日才做"
-            value={note}
-            onChange={e => setNote(e.target.value)}
-          />
-        </div>
-
-        {/* 公开选项 */}
-        <button
-          onClick={() => setIsPublic(v => !v)}
-          className="flex items-center gap-3 w-full text-left"
-          style={{
-            background: 'var(--color-surface)',
-            borderRadius: 20,
-            padding: '16px 18px',
-            boxShadow: 'var(--shadow-card)',
-            border: 'none',
-            cursor: 'pointer',
-          }}
-        >
-          <div
+      <div className="flex flex-col gap-5 px-5 py-5 pb-nav">
+        {/* 图片上传区 */}
+        <div className="relative">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full flex flex-col items-center justify-center gap-3 active:scale-[0.98] transition-transform"
             style={{
-              width: 22, height: 22,
-              borderRadius: 6,
-              background: isPublic ? 'var(--color-primary)' : 'transparent',
-              border: isPublic ? 'none' : '2px solid #D6D3D1',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-              transition: 'all 200ms',
+              height: 220,
+              borderRadius: 24,
+              overflow: 'hidden',
+              background: imageDataUrl ? 'transparent' : 'var(--color-surface)',
+              border: imageDataUrl ? 'none' : '2px dashed rgba(234,88,12,0.25)',
+              boxShadow: 'var(--shadow-card)',
             }}
           >
-            {isPublic && (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+            {imageDataUrl ? (
+              <>
+                <img src={imageDataUrl} className="w-full h-full object-cover" alt="预览" />
+                <div
+                  className="absolute inset-0 flex items-end justify-center pb-4"
+                  style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.4) 0%, transparent 60%)' }}
+                >
+                  <span className="text-white text-xs font-medium" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.6)' }}>
+                    点击更换图片
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                  style={{ background: '#FFF7ED' }}
+                >
+                  <Camera size={28} style={{ color: 'var(--color-primary)' }} strokeWidth={1.5} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-center" style={{ color: 'var(--color-muted)' }}>
+                    点击上传菜品图片
+                  </p>
+                  <p className="text-xs text-center mt-1" style={{ color: 'rgba(0,0,0,0.3)' }}>
+                    可选，支持拍照或相册
+                  </p>
+                </div>
+              </>
             )}
-          </div>
-          <div>
-            <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>上传到公共菜库</div>
-            <div className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>所有家庭均可看到此菜品</div>
-          </div>
-        </button>
+          </button>
+
+          {/* 移除图片 */}
+          {imageDataUrl && (
+            <button
+              onClick={() => setImageDataUrl('')}
+              className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.45)' }}
+            >
+              <X size={14} color="white" strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+
+        {/* 菜名输入 */}
+        <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
+          <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-muted)' }}>
+            菜品名称
+          </label>
+          <input
+            className="input w-full"
+            style={{ fontSize: 16 }}
+            placeholder="如：宫保鸡丁"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && save()}
+          />
+        </div>
+
+        {/* AI 提示 */}
+        <div
+          className="flex items-center gap-2.5 px-4 py-3 rounded-2xl"
+          style={{ background: '#FFF7ED' }}
+        >
+          <Sparkles size={15} style={{ color: 'var(--color-primary)', flexShrink: 0 }} strokeWidth={2} />
+          <span className="text-xs leading-relaxed" style={{ color: '#92400E' }}>
+            保存后 AI 将自动识别分类、食材、烹饪时长等信息
+          </span>
+        </div>
 
         {error && (
           <div className="text-sm px-4 py-3 rounded-2xl" style={{ background: '#FEF2F2', color: '#DC2626' }}>
@@ -224,12 +226,25 @@ export default function AddDishPage() {
         <button
           onClick={save}
           disabled={!name.trim() || loading}
-          className="btn-primary mt-2"
-          style={{ opacity: !name.trim() || loading ? 0.5 : 1 }}
+          className="btn-primary mt-1 w-full"
+          style={{ opacity: !name.trim() || loading ? 0.6 : 1 }}
         >
-          {loading ? '保存中…' : '保存菜品'}
+          {loading ? (
+            <>
+              <Sparkles size={16} strokeWidth={2} />
+              {loadingLabel}
+            </>
+          ) : '保存菜品'}
         </button>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleImageSelect}
+      />
     </div>
   )
 }
