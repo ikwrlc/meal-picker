@@ -6,6 +6,9 @@ import { getFamily, getMember, getDeviceId, saveLocalRecord, getLocalRecords, ge
 import type { Dish } from '../types'
 import { DISH_CATEGORIES, MEAL_PLAN } from '../types'
 
+const DEFAULT_BG_IMAGE = 'https://images.unsplash.com/photo-1547592180-85f173990554?w=900&q=80&auto=format&fit=crop'
+const DEFAULT_AVATAR_IMAGE = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200&q=80&auto=format&fit=crop'
+
 const BG_THEMES = [
   { label: '橙焰', value: 'linear-gradient(135deg, #EA580C 0%, #F97316 100%)' },
   { label: '暖红', value: 'linear-gradient(135deg, #DC2626 0%, #F87171 100%)' },
@@ -239,10 +242,18 @@ export default function MainPage() {
     setProfileSheetOpen(true)
   }
 
+  function dataUrlToBlob(dataUrl: string): Blob {
+    const [meta, base64] = dataUrl.split(',')
+    const mime = meta.match(/:(.*?);/)?.[1] ?? 'image/jpeg'
+    const binary = atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return new Blob([bytes], { type: mime })
+  }
+
   async function uploadToStorage(dataUrl: string, path: string): Promise<string> {
     try {
-      const res = await fetch(dataUrl)
-      const blob = await res.blob()
+      const blob = dataUrlToBlob(dataUrl)
       const ext = blob.type.includes('png') ? 'png' : 'jpg'
       const { data, error } = await supabase.storage
         .from('user-assets')
@@ -323,9 +334,9 @@ export default function MainPage() {
         className="flex-shrink-0 relative overflow-hidden"
         style={{
           height: 'calc(190px + env(safe-area-inset-top, 0px))',
-          ...(profile.bgImage
-            ? { backgroundImage: `url(${profile.bgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-            : { background: profile.bgTheme }),
+          backgroundImage: `url(${profile.bgImage || DEFAULT_BG_IMAGE})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
         }}
       >
         {/* Bottom gradient for readability */}
@@ -344,12 +355,7 @@ export default function MainPage() {
             className="w-11 h-11 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center"
             style={{ background: 'rgba(255,255,255,0.25)', border: '2px solid rgba(255,255,255,0.5)' }}
           >
-            {profile.avatar
-              ? <img src={profile.avatar} alt="avatar" className="w-full h-full object-cover" />
-              : <span className="text-white font-bold text-lg">
-                  {(profile.nickname || '美')[0]}
-                </span>
-            }
+            <img src={profile.avatar || DEFAULT_AVATAR_IMAGE} alt="avatar" className="w-full h-full object-cover" />
           </div>
           <div className="text-left">
             <div className="text-white font-semibold text-base leading-tight" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>
@@ -762,15 +768,9 @@ export default function MainPage() {
             <p className="text-xs font-medium mb-3" style={{ color: 'var(--color-muted)' }}>头像</p>
             <div className="flex items-center gap-4">
               <div
-                className="w-16 h-16 rounded-2xl flex-shrink-0 overflow-hidden flex items-center justify-center"
-                style={{ background: editBgImage ? `url(${editBgImage})` : editBg }}
+                className="w-16 h-16 rounded-2xl flex-shrink-0 overflow-hidden"
               >
-                {editAvatar
-                  ? <img src={editAvatar} alt="avatar" className="w-full h-full object-cover" />
-                  : <span className="text-white font-bold text-2xl">
-                      {(editNickname || '美')[0]}
-                    </span>
-                }
+                <img src={editAvatar || DEFAULT_AVATAR_IMAGE} alt="avatar" className="w-full h-full object-cover" />
               </div>
               <div className="flex flex-col gap-2">
                 <button
