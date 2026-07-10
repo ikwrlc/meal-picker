@@ -388,7 +388,7 @@ export default function MainPage() {
         {/* Left category sidebar */}
         <div
           className="flex-shrink-0 overflow-y-auto no-scrollbar"
-          style={{ width: 68, background: '#F7F5F2', borderRight: '1px solid rgba(0,0,0,0.05)', paddingBottom: 'calc(var(--nav-height) + var(--safe-bottom))' }}
+          style={{ width: 68, background: '#F7F5F2', borderRight: '1px solid rgba(0,0,0,0.05)', paddingBottom: totalItems > 0 ? 'calc(var(--nav-height) + var(--safe-bottom) + 72px)' : 'calc(var(--nav-height) + var(--safe-bottom))' }}
         >
           {(['全部', ...DISH_CATEGORIES] as string[]).map(c => {
             const isActive = category === c
