@@ -119,7 +119,7 @@ export default function AddDishPage() {
         ingredients: ai.ingredients,
         cook_time: ai.cook_time,
         note: ai.note,
-        is_public: false,
+        is_public: !family,
         family_id: family?.id ?? null,
         created_by: member?.id ?? null,
         image_url,
