@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Camera, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Camera, Sparkles, X, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { getFamily, getMember, getDeviceId } from '../lib/storage'
+import { getDeviceId } from '../lib/storage'
 import type { DishType } from '../types'
 
 async function compressImage(file: File): Promise<string> {
@@ -33,6 +33,21 @@ function dataUrlToBlob(dataUrl: string): Blob {
 }
 
 const CATEGORIES = '经典爆款、特色小炒、炖菜红烧、火锅水煮、汤羹、凉拌冷盘、精品大菜、时令水果、饮料'
+const QWEN_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+
+function qwenFetch(content: string) {
+  return fetch(QWEN_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${import.meta.env.VITE_QWEN_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'qwen-turbo',
+      messages: [{ role: 'user', content }],
+    }),
+  })
+}
 
 interface AIDishInfo {
   category: string
@@ -43,34 +58,33 @@ interface AIDishInfo {
 }
 
 async function analyzeWithQwen(name: string): Promise<AIDishInfo> {
-  const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${import.meta.env.VITE_QWEN_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'qwen-turbo',
-      messages: [{
-        role: 'user',
-        content: `你是中国家庭菜品分类助手。根据菜名，只返回以下 JSON，不要任何说明或代码块：
+  const resp = await qwenFetch(
+    `你是中国家庭菜品分类助手。根据菜名，只返回以下 JSON，不要任何说明或代码块：
 {"category":"分类","type":"类型","ingredients":["食材1","食材2"],"cook_time":分钟数,"note":null}
 分类必须是：${CATEGORIES} 其中之一
 type：meat（荤菜）、vegetable（素菜）、half（半荤半素）
 ingredients：4-8 种主要食材
-菜名：${name}`,
-      }],
-    }),
-  })
+菜名：${name}`
+  )
   const data = await resp.json()
   const text: string = data.choices?.[0]?.message?.content ?? ''
   return JSON.parse(text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim())
 }
 
+async function checkDuplicate(name: string, existing: string[]): Promise<string | null> {
+  if (existing.length === 0) return null
+  const resp = await qwenFetch(
+    `判断「${name}」和以下菜品列表中是否有本质上是同一道菜（同一道菜，叫法不同）。
+如果有，只回复那个菜名；如果没有，只回复：无
+菜品列表：${existing.join('、')}`
+  )
+  const data = await resp.json()
+  const text = (data.choices?.[0]?.message?.content ?? '').trim()
+  return text === '无' || text === '' ? null : text
+}
+
 export default function AddDishPage() {
   const navigate = useNavigate()
-  const family = getFamily()
-  const member = getMember()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [name, setName] = useState('')
@@ -78,6 +92,8 @@ export default function AddDishPage() {
   const [loading, setLoading] = useState(false)
   const [loadingLabel, setLoadingLabel] = useState('')
   const [error, setError] = useState('')
+  const [duplicateOf, setDuplicateOf] = useState<string | null>(null)
+  const [pendingAI, setPendingAI] = useState<AIDishInfo | null>(null)
 
   async function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -86,47 +102,76 @@ export default function AddDishPage() {
     e.target.value = ''
   }
 
+  async function uploadImage(): Promise<string | null> {
+    if (!imageDataUrl) return null
+    const blob = dataUrlToBlob(imageDataUrl)
+    const path = `dishes/${getDeviceId()}_${Date.now()}.jpg`
+    const { data: up } = await supabase.storage
+      .from('user-assets')
+      .upload(path, blob, { upsert: false, contentType: 'image/jpeg' })
+    if (!up) return null
+    return supabase.storage.from('user-assets').getPublicUrl(up.path).data.publicUrl
+  }
+
+  async function doInsert(ai: AIDishInfo) {
+    setLoadingLabel('上传图片中…')
+    const image_url = await uploadImage()
+
+    setLoadingLabel('保存中…')
+    const { error: dbErr } = await supabase.from('dishes').insert({
+      name: name.trim(),
+      category: ai.category,
+      type: ai.type,
+      ingredients: ai.ingredients,
+      cook_time: ai.cook_time,
+      note: ai.note,
+      is_public: true,
+      family_id: null,
+      created_by: null,
+      image_url,
+    })
+    if (dbErr) throw new Error(dbErr.message)
+    navigate(-1)
+  }
+
   async function save() {
     if (!name.trim() || loading) return
     setLoading(true)
     setError('')
+    setDuplicateOf(null)
 
     try {
-      // 1. AI 分析
       setLoadingLabel('AI 分析中…')
-      const ai = await analyzeWithQwen(name.trim())
+      const [ai, { data: existing }] = await Promise.all([
+        analyzeWithQwen(name.trim()),
+        supabase.from('dishes').select('name').eq('is_public', true),
+      ])
 
-      // 2. 上传图片
-      let image_url: string | null = null
-      if (imageDataUrl) {
-        setLoadingLabel('上传图片中…')
-        const blob = dataUrlToBlob(imageDataUrl)
-        const path = `dishes/${getDeviceId()}_${Date.now()}.jpg`
-        const { data: up } = await supabase.storage
-          .from('user-assets')
-          .upload(path, blob, { upsert: false, contentType: 'image/jpeg' })
-        if (up) {
-          image_url = supabase.storage.from('user-assets').getPublicUrl(up.path).data.publicUrl
-        }
+      setLoadingLabel('检查重复…')
+      const dup = await checkDuplicate(name.trim(), existing?.map(d => d.name) ?? [])
+
+      if (dup) {
+        setPendingAI(ai)
+        setDuplicateOf(dup)
+        setLoading(false)
+        setLoadingLabel('')
+        return
       }
 
-      // 3. 存库
-      setLoadingLabel('保存中…')
-      const { error: dbErr } = await supabase.from('dishes').insert({
-        name: name.trim(),
-        category: ai.category,
-        type: ai.type,
-        ingredients: ai.ingredients,
-        cook_time: ai.cook_time,
-        note: ai.note,
-        is_public: !family,
-        family_id: family?.id ?? null,
-        created_by: member?.id ?? null,
-        image_url,
-      })
-      if (dbErr) throw new Error(dbErr.message)
+      await doInsert(ai)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+      setLoading(false)
+      setLoadingLabel('')
+    }
+  }
 
-      navigate(-1)
+  async function confirmAnyway() {
+    if (!pendingAI) return
+    setLoading(true)
+    setDuplicateOf(null)
+    try {
+      await doInsert(pendingAI)
     } catch (e) {
       setError(e instanceof Error ? e.message : '保存失败')
       setLoading(false)
@@ -136,7 +181,6 @@ export default function AddDishPage() {
 
   return (
     <div className="flex flex-col min-h-svh" style={{ background: 'var(--color-bg)' }}>
-      {/* Header */}
       <div
         className="flex items-center gap-3 px-5 sticky top-0 z-10"
         style={{
@@ -185,25 +229,16 @@ export default function AddDishPage() {
               </>
             ) : (
               <>
-                <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                  style={{ background: '#FFF7ED' }}
-                >
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: '#FFF7ED' }}>
                   <Camera size={28} style={{ color: 'var(--color-primary)' }} strokeWidth={1.5} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-center" style={{ color: 'var(--color-muted)' }}>
-                    点击上传菜品图片
-                  </p>
-                  <p className="text-xs text-center mt-1" style={{ color: 'rgba(0,0,0,0.3)' }}>
-                    可选，支持拍照或相册
-                  </p>
+                  <p className="text-sm font-medium text-center" style={{ color: 'var(--color-muted)' }}>点击上传菜品图片</p>
+                  <p className="text-xs text-center mt-1" style={{ color: 'rgba(0,0,0,0.3)' }}>可选，支持拍照或相册</p>
                 </div>
               </>
             )}
           </button>
-
-          {/* 移除图片 */}
           {imageDataUrl && (
             <button
               onClick={() => setImageDataUrl('')}
@@ -217,29 +252,56 @@ export default function AddDishPage() {
 
         {/* 菜名输入 */}
         <div style={{ background: 'var(--color-surface)', borderRadius: 20, padding: '16px 18px', boxShadow: 'var(--shadow-card)' }}>
-          <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-muted)' }}>
-            菜品名称
-          </label>
+          <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--color-muted)' }}>菜品名称</label>
           <input
             className="input w-full"
             style={{ fontSize: 16 }}
             placeholder="如：宫保鸡丁"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={e => { setName(e.target.value); setDuplicateOf(null) }}
             onKeyDown={e => e.key === 'Enter' && save()}
           />
         </div>
 
         {/* AI 提示 */}
-        <div
-          className="flex items-center gap-2.5 px-4 py-3 rounded-2xl"
-          style={{ background: '#FFF7ED' }}
-        >
+        <div className="flex items-center gap-2.5 px-4 py-3 rounded-2xl" style={{ background: '#FFF7ED' }}>
           <Sparkles size={15} style={{ color: 'var(--color-primary)', flexShrink: 0 }} strokeWidth={2} />
           <span className="text-xs leading-relaxed" style={{ color: '#92400E' }}>
-            保存后 AI 将自动识别分类、食材、烹饪时长等信息
+            AI 将自动识别分类、食材、烹饪时长，并检查是否重复
           </span>
         </div>
+
+        {/* 重复警告 */}
+        {duplicateOf && (
+          <div style={{ background: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 20, padding: '16px 18px' }}>
+            <div className="flex items-start gap-3 mb-4">
+              <AlertTriangle size={18} style={{ color: '#D97706', flexShrink: 0, marginTop: 1 }} strokeWidth={2} />
+              <div>
+                <p className="text-sm font-semibold" style={{ color: '#92400E' }}>可能已存在相同菜品</p>
+                <p className="text-xs mt-1 leading-relaxed" style={{ color: '#B45309' }}>
+                  「{name.trim()}」和菜库中的「{duplicateOf}」可能是同一道菜，确认要继续添加吗？
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setDuplicateOf(null); setPendingAI(null) }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#FEF3C7', color: '#92400E', border: 'none', cursor: 'pointer' }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmAnyway}
+                disabled={loading}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+                style={{ background: '#D97706', color: 'white', border: 'none', cursor: 'pointer', opacity: loading ? 0.6 : 1 }}
+              >
+                {loading ? loadingLabel || '保存中…' : '仍然添加'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="text-sm px-4 py-3 rounded-2xl" style={{ background: '#FEF2F2', color: '#DC2626' }}>
@@ -247,28 +309,19 @@ export default function AddDishPage() {
           </div>
         )}
 
-        <button
-          onClick={save}
-          disabled={!name.trim() || loading}
-          className="btn-primary mt-1 w-full"
-          style={{ opacity: !name.trim() || loading ? 0.6 : 1 }}
-        >
-          {loading ? (
-            <>
-              <Sparkles size={16} strokeWidth={2} />
-              {loadingLabel}
-            </>
-          ) : '保存菜品'}
-        </button>
+        {!duplicateOf && (
+          <button
+            onClick={save}
+            disabled={!name.trim() || loading}
+            className="btn-primary mt-1 w-full"
+            style={{ opacity: !name.trim() || loading ? 0.6 : 1 }}
+          >
+            {loading ? <><Sparkles size={16} strokeWidth={2} />{loadingLabel}</> : '保存菜品'}
+          </button>
+        )}
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleImageSelect}
-      />
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
     </div>
   )
 }
